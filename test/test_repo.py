@@ -6,6 +6,8 @@
 # the BSD License: http://www.opensource.org/licenses/bsd-license.php
 import glob
 import io
+import random
+import time
 from io import BytesIO
 import itertools
 import os
@@ -17,6 +19,7 @@ from unittest import mock, skipIf, SkipTest
 
 import pytest
 
+import git
 from git import (
     InvalidGitRepositoryError,
     Repo,
@@ -1173,3 +1176,30 @@ class TestRepo(TestBase):
         r.git.add(Git.polish_url(fp))
         r.git.commit(message="init")
         self.assertEqual(r.git.show("HEAD:hello.txt", strip_newline_in_stdout=False), "hello\n")
+
+    def test_repo_in_symlink(self):
+        def tiny_commit(repo: Repo):
+            print(repo.working_tree_dir)
+            new_file_path: pathlib.Path = pathlib.Path(repo.working_tree_dir).joinpath(f'a_file{random.randint(1,99)}.txt')
+            with open(new_file_path, 'w+') as fid:
+                fid.write('sometext and a clown')
+            repo.index.add((new_file_path,))
+            commit = repo.git.commit(m="- add the test")
+            assert commit is not None
+        with tempfile.TemporaryDirectory() as original_repo_prefix, tempfile.TemporaryDirectory() as differing_prefix:
+            test_repo_dir: pathlib.Path = pathlib.Path(original_repo_prefix + '/test_repo')
+            original_repo = Repo.init(path=test_repo_dir, mkdir=True)
+            original_repo.git.checkout(b='main')
+            tiny_commit(original_repo)
+
+            pathlib.Path('/private_tmp/').symlink_to(target=''.join(test_repo_dir.parts[0:2]), target_is_directory=True)
+            time.sleep(6000)
+            linked_dir: pathlib.Path = pathlib.Path(f'/private_tmp{original_repo_prefix}')
+            # linked_dir: pathlib.Path = pathlib.Path(differing_prefix + '/symlink')
+            # os.symlink(src=test_repo_dir, dst=linked_dir)
+            linked_repo = Repo(linked_dir)
+
+            linked_repo.git.checkout(b='test-branch')
+            tiny_commit(linked_repo)
+            linked_repo.git.checkout('main')
+            linked_repo.git.branch(D='test-branch')
